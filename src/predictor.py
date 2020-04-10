@@ -25,6 +25,8 @@ import nexradaws
 
 import datahandle
 
+parameters = ["temperature", "dewpoint", "windDirection", "windSpeed", "windGust", "barometricPressure", "seaLevelPressure", "visibility", "relativeHumidity"]
+
 # preidct barometric pressure over time
 def predictPressure():
     # retrieve list of stations
@@ -59,5 +61,9 @@ def plotStations():
     plt.show()
 
 if __name__ == "__main__":
-    print(datahandle.pullData("KPHX", "barometricPressure"))
+    print("running")
+    for _ in datahandle.listStations():
+        datahandle.pullData(_, parameters)
+        print(_)
+    print("done")
     #predictPressure()
