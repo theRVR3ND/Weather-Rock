@@ -4,7 +4,15 @@
 #
 # using National Weather Service API
 # https://www.weather.gov/documentation/services-web-api#/
+# && NEXRAD (from NOAA) API
+# https://github.com/aarande/nexradaws/
 ##
+
+import collections
+import numpy as np
+
+import tensorflow as tf
+#from tensorflow.keras import layers
 
 import urllib.request
 import json
@@ -45,20 +53,43 @@ def stationInfo(station):
 def pullData(station):
     return query("https://api.weather.gov/stations/%s/observations" % station)
 
-if __name__ == "__main__":
-    # pull data of all stations
-    stations = listStations()[1500:2000] # change later (when i have a more powerful machine :P)
-    #data = [len(stations)]
+# load station's location info into json file
+# format:
+# stations (index){
+#   id ("KXXX")
+#   coord [xxx.xx, xxx.xx]
+# }
+def jsonStationInfo(stations):
+    data = {}
 
+    for i in range(len(stations)):
+        info = stationInfo(stations[i])
+        lat = float(info["geometry"]["coordinates"][0])
+        lon = float(info["geometry"]["coordinates"][1])
+
+        data[i] = {}
+        data[i]["id"] = stations[i]
+        data[i]["coord"] = [lat, lon]
+    
+    with open('stationInfo.json', 'w') as f:
+        json.dump(data, f)
+
+if __name__ == "__main__":
     # plot location of stations
     fig = plt.figure()
     a1 = fig.add_subplot(1, 1, 1)
-    for _ in stations:
-        info = stationInfo(_)
-        lat = float(info["geometry"]["coordinates"][0])
-        lon = float(info["geometry"]["coordinates"][1])
-        a1.plot(lat, lon, ".", color="black")
-        #print("%f,%f" % (-lat, lon))
+    
+    coords = [[] for _ in range(2)]
+
+    with open("stationInfo.json") as f:
+        j = json.loads(f.read())
+        for _ in j:
+            coord = j[_]["coord"]
+            #print("%s (%f, %f)" % (_, coord[0], coord[1]))
+            coords[0].append(coord[0])
+            coords[1].append(coord[1])
+    
+    a1.plot(coords[0], coords[1], ".", color="black")
     plt.show()
 
     #for _ in stations:
