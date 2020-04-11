@@ -27,21 +27,9 @@ import datahandle
 
 parameters = ["temperature", "dewpoint", "windDirection", "windSpeed", "windGust", "barometricPressure", "seaLevelPressure", "visibility", "relativeHumidity"]
 
-# preidct barometric pressure over time
-def predictPressure():
-    # retrieve list of stations
-    stations = datahandle.listStations()[:100]
-    
-    # pull barometric data
-    pressure = [[] for _ in range(len(stations))] # baro pressure data (axis1=stations,axis2=values)
-
-    # train model
-#    model = tf.keras.models.Sequential([
-#        tf.keras.layers.Embedding(input_dim=len(stations), output_dim=len(stations)),
-#        tf.keras.layers.LSTM(128),
-#        tf.keras.layers.Dense(10)
-#    ])
-#    model.summary()
+# preidct parameters
+def predictValues(data):
+    print("lalala")
 
 def plotStations():
     # plot location of stations
@@ -61,9 +49,32 @@ def plotStations():
     plt.show()
 
 if __name__ == "__main__":
-    print("running")
-    for _ in datahandle.listStations():
-        datahandle.pullData(_, parameters)
-        print(_)
-    print("done")
+    #print("running")
+    #print(datahandle.pullData(datahandle.listStations()[:10], parameters))
+    stations = datahandle.listStations()[:100]
+    print("1")
+    #dataJSON = datahandle.pullData(stations, parameters)
+    dataJSON = datahandle.loadData(stations, parameters)
+    print("2")
+    trainX, trainY = datahandle.formData(stations, parameters, 3, 7, dataJSON)
+    print(str(trainX.shape) + " " + str(trainY.shape))
+    print("3")
+    testX, testY = datahandle.formData(stations, parameters, 1, 3, dataJSON)
+    print(str(testX.shape) + " " + str(testY.shape))
+    print("4")
+
+    model = tf.keras.models.Sequential([
+        tf.keras.layers.Embedding(input_dim=len(stations), output_dim=len(stations)),
+        tf.keras.layers.LSTM(128),
+        tf.keras.layers.Dense(10)
+    ])
+    
+    model.compile(optimizer='adam',
+        loss='MeanSquaredError',
+        metrics=['MeanAbsoluteError'])
+
+    model.fit(trainX, trainY, epochs=5)
+    model.evaluate(testX, testY)
+
+    #print("done")
     #predictPressure()

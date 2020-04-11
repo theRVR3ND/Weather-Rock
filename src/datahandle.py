@@ -1,4 +1,5 @@
 import os
+import numpy as np
 from pathlib import Path
 from datetime import datetime
 from datetime import timedelta
@@ -57,12 +58,23 @@ def stationsInfo(station):
     return query("https://api.weather.gov/stations/%s" % station)
 
 # pull data from station
-def queryStation(station):
-    return query("https://api.weather.gov/stations/%s/observations" % station)
+def queryStation(station, limit):
+    return query("https://api.weather.gov/stations/%s/observations?station=%s&limit=%d" % (station, station, limit))
 
 # parse time from NWS format
 def parseTime(string):
     return datetime.strptime(string, '%Y-%m-%dT%H:%M:%S+00:00')
+
+def composeTime(time):
+    return time.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+# arg: time is datetime object
+def roundTime(time):
+    if time.minute < 30:
+        return time.replace(minute=0)
+    else:
+        time += timedelta(hours=1)
+        return time.replace(minute=0)
 
 # calculate time-extrapolated data (for the nearest hour)
 # args: tuple (value, datetime)
@@ -72,64 +84,101 @@ def extrapolateData(prev, curr):
     
     dY = curr[0] - prev[0]
     dt = (curr[1] - prev[1]).seconds // 60
-    targTime = curr[1] # round curr time to nearest hour
-    if targTime.minute < 30:
-        targTime = targTime.replace(minute=0)
-    else:
-        targTime += timedelta(hours=1)
-        targTime = targTime.replace(minute=0)
+    targTime = roundTime(curr[1]) # round curr time to nearest hour
     dm = (targTime - prev[1]).seconds // 60
     
     return (prev[0] + (dm * dY) / dt, targTime)
 
-# retrieve data from station (either saved or query)
-def pullData(station, parameters):
-    print("pullData start")
+# retrieve data from stations (either saved or query)
+# json heirarchy:
+# station -> time -> parameters (values)
+def pullData(stations, parameters):
     # check if data exists
-    p = Path("data", "%s.json" % station)
-    j = []
-    if p.is_file():
-        with open(p) as f:
+    filepath = Path("data", "observations.json")
+    j = {}
+    if filepath.is_file():
+        with open(filepath) as f:
             j = json.loads(f.read())
-    
-    now = datetime.utcnow()
-    last_data = parseTime(j[-1]["time"]) if len(j) > 0 else datetime(1990, 1, 1)
 
-    if now - last_data < timedelta(hours=1): # skip if data is current
-        return j
-
-    obs = queryStation(station) # observation data
-    i = min(24, len(obs["features"])) # check last 24 hours of data (or however much is available)
-    modded = False
-    while (len(j) == 0 or now - last_data >= timedelta(hours=1)) and i > 0:
-        i -= 1
-
-        obvTime = parseTime(obs["features"][i]["id"].split("/")[-1]) # last observation time
-        if last_data >= obvTime:
-            continue
-
-        modded = True
-        dataTime = obvTime
-        j.append({})
-        for param in parameters:
-            obvValue = obs["features"][i]["properties"][param]["value"]
-            if len(j) > 1:
-                extrapolated = extrapolateData(
-                    (j[-2][param], parseTime(j[-2]["time"])),
-                    (obvValue, obvTime))
-                j[-1][param] = extrapolated[0]
-                dataTime = extrapolated[1]
-            else:
-                j[-1][param] = obvValue
-        j[-1]["time"] = dataTime.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    modded = False # json modification flag
+    for s in range(len(stations)):
+        station = stations[s]        
         
-        last_data = obvTime
+        if not station in j:
+            j[station] = {}
+
+        limit = 24 # limit query to last 24 obervations (approx. last 24 hrs)
+        obs = queryStation(station, limit) # observation data
+
+        modded = False
+        for i in range(len(obs["features"])):
+            o = obs["features"][i]
+            obsTime = o["id"].split("/")[-1] # observation timestamp
+            if not obsTime in j[station]:
+                modded = True
+
+                # extrapolate data to nearest hour (for ease in formatting data later)
+                if len(j[station]) > 1:
+                    obsTime = composeTime(roundTime(parseTime(obsTime)))
+                    j[station][obsTime] = {}
+                    for p in parameters:
+                        value = o["properties"][p]["value"]
+                        extrap = extrapolateData(
+                            (
+                                obs["features"][i - 1]["properties"][p]["value"],
+                                parseTime(obs["features"][i - 1]["id"].split("/")[-1])
+                            ),
+                            (value, parseTime(obsTime))
+                        )
+                        j[station][obsTime][p] = extrap[0]
+                
+                # no extrapolation of data
+                else:
+                    j[station][obsTime] = {}
+                    for p in parameters:
+                        j[station][obsTime][p] = o["properties"][p]["value"]
+        
+        if True:
+            if 20 * s // len(stations) > 20 * (s - 1) // len(stations):
+                print("[%s>%s]" % ("=" * (1 + 20 * s // (len(stations) - 1)), "-" * (19 - 20 * s // (len(stations) - 1))))
+        else:
+            print(station)
 
     if modded:
-        with open(p, 'w') as f:
+        #modded = False
+        with open(filepath, 'w') as f:
             json.dump(j, f) # update json
             f.flush()
             f.close()
     
-    print("pullData end")
+    #print("pullData end")
     return j
+
+def loadData(stations, parameters):
+    filepath = Path("data", "observations.json")
+    if filepath.is_file():
+        with open(filepath) as f:
+            return json.loads(f.read())
+
+# format data for tf input
+# input shape is [batch, timesteps, feature] (from: https://www.tensorflow.org/api_docs/python/tf/keras/layers/LSTM)
+def formData(stations, parameters, batches, timesteps, jsonObj):
+    data = np.zeros((batches, timesteps, len(stations) * len(parameters)))
+    
+    now = datetime.now()
+
+    for i in range(batches):
+        t = datetime(year=now.year, month=now.month, day=now.day) - timedelta(hours=-batches+timesteps+1)
+        for j in range(timesteps):
+            value = None
+            for m in range(len(stations)):
+                for n in range(len(parameters)):
+                    if composeTime(t) in jsonObj[stations[m]]:
+                        value = jsonObj[stations[m]][composeTime(t)][parameters[n]]
+                    data[i][j][m * len(parameters) + n] = value
+            t += timedelta(hours=1)
+    
+    return data, np.array([data[i][timesteps - 1::timesteps] for i in range(batches)])
+
+if __name__ == "__main__":
+    print("running datahandle.py")
