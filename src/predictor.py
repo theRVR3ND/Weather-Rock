@@ -25,7 +25,6 @@ import nexradaws
 
 import datahandle
 
-parameters = ["temperature", "dewpoint", "windDirection", "windSpeed", "windGust", "barometricPressure", "seaLevelPressure", "visibility", "relativeHumidity"]
 
 # preidct parameters
 def predictValues(data):
@@ -49,32 +48,63 @@ def plotStations():
     plt.show()
 
 if __name__ == "__main__":
-    #print("running")
-    #print(datahandle.pullData(datahandle.listStations()[:10], parameters))
-    stations = datahandle.listStations()[:100]
-    print("1")
-    #dataJSON = datahandle.pullData(stations, parameters)
-    dataJSON = datahandle.loadData(stations, parameters)
-    print("2")
-    trainX, trainY = datahandle.formData(stations, parameters, 3, 7, dataJSON)
-    print(str(trainX.shape) + " " + str(trainY.shape))
-    print("3")
-    testX, testY = datahandle.formData(stations, parameters, 1, 3, dataJSON)
-    print(str(testX.shape) + " " + str(testY.shape))
-    print("4")
+    stations = datahandle.list_stations()[:100]
+    parameters = ["temperature", "dewpoint", "windDirection", "windSpeed", "windGust", "barometricPressure", "seaLevelPressure", "visibility", "relativeHumidity"]  
 
-    model = tf.keras.models.Sequential([
-        tf.keras.layers.Embedding(input_dim=len(stations), output_dim=len(stations)),
-        tf.keras.layers.LSTM(128),
-        tf.keras.layers.Dense(10)
-    ])
+    #dataJSON = datahandle.pull_data(stations, parameters, 24 * 2)
+    dataJSON = datahandle.load_data()
+    parameters = ["temperature"]
+
+    BATCHES = 256
+    TIMESTEPS = 24 * 4
+    EPOCHS = 10
+    EPOCHSTEPS = 10
     
-    model.compile(optimizer='adam',
-        loss='MeanSquaredError',
-        metrics=['MeanAbsoluteError'])
+    x, y = datahandle.form_data(stations, parameters, BATCHES, TIMESTEPS, dataJSON)
+    #print("(%s, %s)" % (str(x.shape), str(y.shape)))
+    trainX, testX, trainY, testY = x[:len(x)*2//3], x[len(x)*2//3:], y[:len(y)*2//3], y[len(y)*2//3:]
+    #print("(%s, %s) (%s, %s)" % (str(trainX.shape), str(testX.shape), str(trainY.shape), str(testY.shape)))
+    
+    model = tf.keras.models.Sequential([
+        tf.keras.layers.LSTM(16, input_shape=x.shape[1:]),
+        tf.keras.layers.Dense(len(stations) * len(parameters))
+    ])
+    model.summary()
+    
+    model.compile(optimizer='adam', loss='mae')
+    model.fit(trainX, trainY, epochs=EPOCHS, steps_per_epoch=EPOCHSTEPS)
 
-    model.fit(trainX, trainY, epochs=5)
-    model.evaluate(testX, testY)
+    #model.summary()
+    #model.evaluate(testX, testY)
 
-    #print("done")
-    #predictPressure()
+    pred = model.predict(np.array([testX[-1]]))[0]
+    
+    #print("test")
+    #print(testX)
+
+    print(str(pred.shape))
+    print("pred")
+    print(pred)
+    print("testY")
+    print(testY[-1])
+    #print(testY[-1].shape)
+    #print(testY.shape)
+
+
+
+    """
+    print(x[ind, -50:, 0])
+    print(y[ind][0])
+    print(pred[0])
+    """
+
+    t = range(-50, 0)
+
+    for _ in range(1):
+        fig = plt.figure()
+        ind = int(np.random.rand(1) * len(y))
+        # plot actual and predicted values for a single station
+        plt.plot(t, x[ind, -50:, 0], color="red")
+        plt.plot(0, y[ind][0], ".",  color="orange")
+        plt.plot(0, pred[0], "X",    color="green")
+        plt.show()
